@@ -4,8 +4,8 @@ langchain
 langchain_community
 langchain_openai
 langchain_core
-
 openai
+pypdf
 faiss-cpu
 PyPDF2
 python-dotenv
