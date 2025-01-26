@@ -83,9 +83,3 @@ streamlit run app.py
 Contributions are welcome! Please submit pull requests or open issues on the GitHub repository
 ```
 
-## Notes for Developers
-1. Replace placeholders like `your-username` with actual details
-2. Adjust the license section according to your project's licensing
-3. The requirements.txt provided is a starting point; you may need to adjust based on exact package versions used
-
-Would you like me to modify anything about the README?
