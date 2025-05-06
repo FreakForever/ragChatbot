@@ -79,7 +79,7 @@ def retrieve_context(retriever, query: str, top_k: int = 3) -> str:
     except Exception as e:
         st.error(f"Context retrieval error: {e}")
         return ""
-
+# chaining 
 def create_rag_chain(llm, prompt_template):
     return (
         {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
