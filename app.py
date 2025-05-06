@@ -22,53 +22,40 @@ def setup_page_config():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-
     st.markdown("""
     <style>
-    .reportview-container {
-        background-color: #F0F2F6;
-    }
-    .sidebar .sidebar-content {
-        background-color: #FFFFFF;
-        color: #333333;
-    }
-    .stButton>button {
-        background-color: #4CAF50;
-        color: white;
-        border-radius: 10px;
-    }
-    .stTextInput>div>div>input {
-        border-radius: 10px;
-        border: 1px solid #4CAF50;
-    }
-    .stAlert {
-        border-radius: 10px;
-    }
+    .reportview-container { background-color: #F0F2F6; }
+    .sidebar .sidebar-content { background-color: #FFFFFF; color: #333333; }
+    .stButton>button { background-color: #4CAF50; color: white; border-radius: 10px; }
+    .stTextInput>div>div>input { border-radius: 10px; border: 1px solid #4CAF50; }
+    .stAlert { border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-def process_pdf(uploaded_file) -> Optional[FAISS]:
-
+def process_pdfs(uploaded_files: List) -> Optional[FAISS]:
+    all_documents = []
     try:
-        with st.spinner("Processing PDF..."):
-            with open("temp_uploaded.pdf", "wb") as f:
-                f.write(uploaded_file.read())
+        with st.spinner("Processing PDFs..."):
+            for uploaded_file in uploaded_files:
+                temp_path = f"temp_{uploaded_file.name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.read())
 
-            loader = PyPDFLoader("temp_uploaded.pdf")
-            text_doc = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_overlap=200, 
-                chunk_size=1000
-            )
-            documents = text_splitter.split_documents(text_doc)
+                loader = PyPDFLoader(temp_path)
+                text_doc = loader.load()
 
-            db = FAISS.from_documents(documents, OpenAIEmbeddings())
-            
-            st.success("PDF processed successfully! Text converted to embeddings.")
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_overlap=200,
+                    chunk_size=1000
+                )
+                documents = text_splitter.split_documents(text_doc)
+                all_documents.extend(documents)
+
+            db = FAISS.from_documents(all_documents, OpenAIEmbeddings())
+            st.success("All PDFs processed and converted to embeddings.")
             return db
-    
     except Exception as e:
-        st.error(f"Error processing PDF: {e}")
+        st.error(f"Error processing PDFs: {e}")
         return None
 
 def retrieve_context(retriever, query: str, top_k: int = 3) -> str:
@@ -79,7 +66,7 @@ def retrieve_context(retriever, query: str, top_k: int = 3) -> str:
     except Exception as e:
         st.error(f"Context retrieval error: {e}")
         return ""
-# chaining 
+
 def create_rag_chain(llm, prompt_template):
     return (
         {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
@@ -90,49 +77,41 @@ def create_rag_chain(llm, prompt_template):
 
 def main():
     setup_page_config()
-    
+
     st.title("🤖 PDF RAG Chatbot")
-    st.markdown("Upload a PDF and ask questions about its content.")
-    
+    st.markdown("Upload **one or more** PDFs and ask questions about their content.")
 
     with st.sidebar:
         st.header("Configuration")
-        model_choice = st.selectbox(
-            "Choose AI Model", 
-            ["gpt-4o-mini", "gpt-3.5-turbo"]
-        )
-        temperature = st.slider(
-            "Model Temperature", 
-            min_value=0.0, 
-            max_value=1.0, 
-            value=0.2, 
-            step=0.1
-        )
-    uploaded_file = st.file_uploader(
-        "Upload PDF", 
-        type="pdf", 
-        help="Upload a PDF file to start chatting"
+        model_choice = st.selectbox("Choose AI Model", ["gpt-4o-mini", "gpt-3.5-turbo"])
+        temperature = st.slider("Model Temperature", 0.0, 1.0, 0.2, 0.1)
+
+    uploaded_files = st.file_uploader(
+        "Upload PDF(s)",
+        type="pdf",
+        accept_multiple_files=True,
+        help="Upload one or more PDF files"
     )
 
-    if uploaded_file:
-        vector_db = process_pdf(uploaded_file)
-        
+    if uploaded_files:
+        vector_db = process_pdfs(uploaded_files)
+
         if vector_db:
             user_query = st.text_input(
-                "Ask a question about the document", 
-                placeholder="What insights can you provide?"
+                "Ask a question about the documents",
+                placeholder="e.g. Summarize all reports"
             )
-            
+
             if user_query:
                 llm = ChatOpenAI(
-                    model=model_choice, 
-                    temperature=temperature, 
+                    model=model_choice,
+                    temperature=temperature,
                     max_retries=2
                 )
-                
+
                 prompt_template = ChatPromptTemplate.from_template("""
                 Based strictly on the provided context, answer the question.
-                If no relevant information exists, respond: "I cannot find the answer in the document."
+                If no relevant information exists, respond: "I cannot find the answer in the documents."
 
                 Context: {context}
                 Question: {question}
@@ -145,14 +124,13 @@ def main():
                 with st.spinner("Generating response..."):
                     try:
                         result = rag_chain.invoke({
-                            "context": context, 
+                            "context": context,
                             "question": user_query
                         })
                         st.markdown("### 🧠 AI Response:")
                         st.markdown(f"> {result}", unsafe_allow_html=True)
-                        with st.expander("Retrieved Context"):
+                        with st.expander("📄 Retrieved Context"):
                             st.write(context)
-                    
                     except Exception as e:
                         st.error(f"Response generation failed: {e}")
 
