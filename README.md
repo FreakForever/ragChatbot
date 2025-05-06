@@ -6,9 +6,18 @@ PDF RAG (Retrieval-Augmented Generation) Chatbot is an interactive Streamlit app
 ## Features
 - Upload and process PDF documents
 - Ask questions about the uploaded document
+- **Maintain context across multiple questions (conversation memory)**
 - Choose between different AI models (GPT-4o-mini, GPT-3.5-turbo)
 - Adjust model temperature for creative/precise responses
 - View retrieved context for transparency
+- 
+## Conversation Memory
+
+The chatbot uses **Conversation Buffer Memory** from LangChain to remember previous questions and answers in a session. This allows for more natural, multi-turn conversations that build on prior context.
+
+- Memory is stored during the session only (ephemeral).
+- Useful for follow-up questions or clarifications.
+- Powered by LangChain's `ConversationBufferMemory`.
 
 ## Prerequisites
 - Python 3.8+
