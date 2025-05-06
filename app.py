@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
-from typing import List, Optional
+from typing import Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_openai import OpenAIEmbeddings
@@ -9,9 +9,11 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+from langchain.memory import ConversationBufferMemory
 
+# Load environment variables
 load_dotenv()
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
@@ -22,40 +24,52 @@ def setup_page_config():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
     st.markdown("""
     <style>
-    .reportview-container { background-color: #F0F2F6; }
-    .sidebar .sidebar-content { background-color: #FFFFFF; color: #333333; }
-    .stButton>button { background-color: #4CAF50; color: white; border-radius: 10px; }
-    .stTextInput>div>div>input { border-radius: 10px; border: 1px solid #4CAF50; }
-    .stAlert { border-radius: 10px; }
+    .reportview-container {
+        background-color: #F0F2F6;
+    }
+    .sidebar .sidebar-content {
+        background-color: #FFFFFF;
+        color: #333333;
+    }
+    .stButton>button {
+        background-color: #4CAF50;
+        color: white;
+        border-radius: 10px;
+    }
+    .stTextInput>div>div>input {
+        border-radius: 10px;
+        border: 1px solid #4CAF50;
+    }
+    .stAlert {
+        border-radius: 10px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-def process_pdfs(uploaded_files: List) -> Optional[FAISS]:
-    all_documents = []
+def process_pdf(uploaded_file) -> Optional[FAISS]:
     try:
-        with st.spinner("Processing PDFs..."):
-            for uploaded_file in uploaded_files:
-                temp_path = f"temp_{uploaded_file.name}"
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.read())
+        with st.spinner("Processing PDF..."):
+            with open("temp_uploaded.pdf", "wb") as f:
+                f.write(uploaded_file.read())
 
-                loader = PyPDFLoader(temp_path)
-                text_doc = loader.load()
+            loader = PyPDFLoader("temp_uploaded.pdf")
+            text_doc = loader.load()
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_overlap=200,
+                chunk_size=1000
+            )
+            documents = text_splitter.split_documents(text_doc)
 
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_overlap=200,
-                    chunk_size=1000
-                )
-                documents = text_splitter.split_documents(text_doc)
-                all_documents.extend(documents)
+            db = FAISS.from_documents(documents, OpenAIEmbeddings())
 
-            db = FAISS.from_documents(all_documents, OpenAIEmbeddings())
-            st.success("All PDFs processed and converted to embeddings.")
+            st.success("PDF processed successfully! Text converted to embeddings.")
             return db
+
     except Exception as e:
-        st.error(f"Error processing PDFs: {e}")
+        st.error(f"Error processing PDF: {e}")
         return None
 
 def retrieve_context(retriever, query: str, top_k: int = 3) -> str:
@@ -67,9 +81,16 @@ def retrieve_context(retriever, query: str, top_k: int = 3) -> str:
         st.error(f"Context retrieval error: {e}")
         return ""
 
-def create_rag_chain(llm, prompt_template):
+def create_rag_chain(llm, prompt_template, memory):
+    def format_input(inputs):
+        return {
+            "context": inputs["context"],
+            "question": inputs["question"],
+            "chat_history": memory.load_memory_variables({})["chat_history"]
+        }
+
     return (
-        {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
+        RunnableLambda(format_input)
         | prompt_template
         | llm
         | StrOutputParser()
@@ -79,27 +100,35 @@ def main():
     setup_page_config()
 
     st.title("🤖 PDF RAG Chatbot")
-    st.markdown("Upload **one or more** PDFs and ask questions about their content.")
+    st.markdown("Upload a PDF and ask questions about its content.")
 
     with st.sidebar:
         st.header("Configuration")
-        model_choice = st.selectbox("Choose AI Model", ["gpt-4o-mini", "gpt-3.5-turbo"])
-        temperature = st.slider("Model Temperature", 0.0, 1.0, 0.2, 0.1)
+        model_choice = st.selectbox(
+            "Choose AI Model",
+            ["gpt-4o-mini", "gpt-3.5-turbo"]
+        )
+        temperature = st.slider(
+            "Model Temperature",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.2,
+            step=0.1
+        )
 
-    uploaded_files = st.file_uploader(
-        "Upload PDF(s)",
+    uploaded_file = st.file_uploader(
+        "Upload PDF",
         type="pdf",
-        accept_multiple_files=True,
-        help="Upload one or more PDF files"
+        help="Upload a PDF file to start chatting"
     )
 
-    if uploaded_files:
-        vector_db = process_pdfs(uploaded_files)
+    if uploaded_file:
+        vector_db = process_pdf(uploaded_file)
 
         if vector_db:
             user_query = st.text_input(
-                "Ask a question about the documents",
-                placeholder="e.g. Summarize all reports"
+                "Ask a question about the document",
+                placeholder="What insights can you provide?"
             )
 
             if user_query:
@@ -109,17 +138,29 @@ def main():
                     max_retries=2
                 )
 
-                prompt_template = ChatPromptTemplate.from_template("""
-                Based strictly on the provided context, answer the question.
-                If no relevant information exists, respond: "I cannot find the answer in the documents."
+                memory = ConversationBufferMemory(
+                    memory_key="chat_history",
+                    return_messages=True
+                )
 
-                Context: {context}
-                Question: {question}
-                """)
+                prompt_template = ChatPromptTemplate.from_template("""
+You are a helpful assistant. Use the following context and previous chat history to answer the question.
+If the answer isn't in the document, respond with: "I cannot find the answer in the document."
+
+Chat History:
+{chat_history}
+
+Context:
+{context}
+
+Question:
+{question}
+""")
 
                 retriever = vector_db.as_retriever(search_kwargs={"k": 3})
                 context = retrieve_context(retriever, user_query)
-                rag_chain = create_rag_chain(llm, prompt_template)
+
+                rag_chain = create_rag_chain(llm, prompt_template, memory)
 
                 with st.spinner("Generating response..."):
                     try:
@@ -127,10 +168,22 @@ def main():
                             "context": context,
                             "question": user_query
                         })
+
+                        memory.save_context(
+                            {"input": user_query},
+                            {"output": result}
+                        )
+
                         st.markdown("### 🧠 AI Response:")
                         st.markdown(f"> {result}", unsafe_allow_html=True)
-                        with st.expander("📄 Retrieved Context"):
+
+                        with st.expander("Retrieved Context"):
                             st.write(context)
+
+                        with st.expander("Conversation History"):
+                            for msg in memory.chat_memory.messages:
+                                st.write(f"{msg.type.capitalize()}: {msg.content}")
+
                     except Exception as e:
                         st.error(f"Response generation failed: {e}")
 
